@@ -1,0 +1,22 @@
+# Secrets & credentials
+.env
+credentials.json
+token.json
+
+# Temporary files
+.tmp/
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Virtual environments
+venv/
+env/
+.venv/
+
+# OS files
+.DS_Store
+Thumbs.db

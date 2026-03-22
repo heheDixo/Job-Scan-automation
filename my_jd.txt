@@ -1,0 +1,34 @@
+## Target Role
+AI Engineer / ML Engineer / GenAI Engineer (Remote)
+
+## Ideal Responsibilities
+- Building and deploying AI agents, RAG pipelines, and LLM-powered applications
+- Designing and fine-tuning machine learning and deep learning models
+- Working with agentic frameworks (LangChain, LangGraph, CrewAI, LlamaIndex)
+- Building MLOps pipelines: model training, evaluation, monitoring, and deployment
+- Developing REST APIs and backend services for AI products using FastAPI
+- Integrating LLMs (OpenAI, Gemini, open-source models) into production systems
+- Working on NLP, computer vision, or multimodal AI problems
+
+## Required Technologies I Want to Use
+- Python, PyTorch, TensorFlow, Scikit-learn
+- LangChain, LangGraph, LlamaIndex, CrewAI
+- FastAPI, Docker, PostgreSQL
+- AWS (SageMaker, Lambda, S3, EC2)
+- OpenAI API, Gemini, open-source LLMs
+- MLflow, DagsHub, Airflow for MLOps
+
+## Preferred Company Type
+- AI-first startups or tech companies building real AI products
+- Remote-first culture
+- Internship or entry-level / junior roles accepted
+- Companies building in: AI agents, RAG, LLM applications, cybersecurity AI, healthcare AI, or developer tools
+
+## Salary Expectation
+- Open to stipend-based internships or entry-level full-time roles
+- Remote work is the priority over compensation
+
+## What I'm NOT Looking For
+- Purely manual QA or data labeling roles with no AI involvement
+- Roles requiring 3+ years of experience
+- On-site only positions outside India

@@ -1,0 +1,51 @@
+Rahul Dixit
+Indian Citizen | dixit.rahul1301@gmail.com | +917028666611 | LinkedIn: rahuldixit | GitHub: heheDixo
+
+## Education
+Ramdeobaba College Of Engineering
+B.Tech in Computer Science
+Nagpur, India | Expected Graduation: June 2027
+- Concentrations: Intelligence and Modeling/Simulations
+- GPA: 9.56/10.00
+- Coursework: Data Structures & Algorithms, Objects & Design, Computer Organization & Programming, Combinatorics, Machine Learning, Artificial Intelligence, Object-Oriented Programming, Statistics & Applications
+
+## Experience
+
+### AI Engineer Intern | Yantrapragya | Nagpur, India | May 2025 – Present
+- Developed a Transformer-based Small Language Model (7M parameters) for intent classification of insurance quotation requests
+- Built custom datasets and preprocessing pipelines including tokenization, padding, and batching
+- Trained and evaluated models across multiple insurance domains, optimizing for generalization and low-latency inference
+- Analyzed model size vs accuracy trade-offs to achieve optimal performance under limited compute constraints
+
+## Projects
+
+### ROYCrew — Autonomous AI Penetration Testing Agent | Nagpur, India | Dec 2025
+- Built a 5-phase autonomous pentest pipeline: recon → scanning → enumeration → crawling → vulnerability scanning
+- Integrated local Qwen 7B LLM (air-gapped via LM Studio) for zero-cost, offline AI-driven analysis
+- Orchestrated 6 security tools (nmap, httpx, gobuster, katana, nuclei) via MCP protocol and subprocess
+- Implemented RAG pipeline for security knowledge retrieval to improve finding quality
+- Generated professional PDF reports with embedded charts, risk heatmaps, and attack chain diagrams
+- Detected critical vulnerabilities including SQLi, XSS, path traversal, and LFI on real targets
+- Built real-time web dashboard with Chart.js for visual finding analysis
+
+### AI Agentic RAG | Nagpur, India | Dec 2025
+- Built an Agentic Retrieval-Augmented Generation (RAG) system using LlamaIndex over custom knowledge sources
+- Designed an LLM-driven agent to decide when to retrieve, re-rank, or reason instead of blindly querying a vector store
+- Implemented ingestion pipelines with chunking, embedding, indexing, and retrieval for unstructured data
+- Integrated Langfuse to trace retrieval steps, agent decisions, prompts, and final responses
+- Improved answer quality by analyzing retrieval relevance, hallucinations, and reasoning failures
+
+## Activities & Leadership
+
+### Google Developer Group | Management Lead | Nagpur, India | Oct 2024 – Present
+- Member of an organization with 100+ members, hosting technical events, managing a board of executives
+- Reaching out to the underprivileged community and colleges in Nagpur
+
+## Skills
+
+ML & DL: TensorFlow, Keras, PyTorch, Scikit-learn, OpenCV, Pandas, NumPy, Matplotlib, Seaborn
+GenAI & Agents: LangChain, LangGraph, CrewAI, LlamaIndex, Langfuse, Prompt Engineering
+MLOps & Backend: MLflow, DagsHub, Docker, Airflow, PostgreSQL, FastAPI, REST APIs
+Cloud & Tools: AWS (S3, EC2, Lambda, SageMaker), Git, Streamlit, Jupyter, Colab, Linux
+Frontend (Basic): React.js, Node.js, Bootstrap, Tailwind CSS
+LLM Platforms: OpenAI API, Google AI Studio (Gemini)

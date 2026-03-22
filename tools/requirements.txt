@@ -1,0 +1,28 @@
+# Core
+python-dotenv
+requests
+httpx
+
+# Job search
+feedparser
+
+# AI matching (FREE — https://console.groq.com, no credit card)
+groq
+
+# Contact scraping fallback
+beautifulsoup4
+
+# Browser automation
+playwright
+playwright-stealth
+
+# Telegram bot
+python-telegram-bot
+flask
+
+# Scheduler
+schedule
+
+# Google Sheets (optional)
+gspread
+google-auth
