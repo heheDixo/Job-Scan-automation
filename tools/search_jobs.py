@@ -216,12 +216,14 @@ def main():
     all_jobs.extend(fetch_remoteok(queries, cfg))
     all_jobs.extend(fetch_weworkremotely(queries, cfg))
 
-    # Limit total jobs per run
+    # Apply max_jobs_per_run limit to *newly saved* jobs, not total fetched.
+    # Without this, if most fetched jobs are already in the DB the cap is
+    # consumed by duplicates and very few new jobs actually get scored.
     max_jobs = cfg.get("max_jobs_per_run", 50)
-    all_jobs = all_jobs[:max_jobs]
-
     new_count = 0
     for job in all_jobs:
+        if new_count >= max_jobs:
+            break
         if save_job(job):
             new_count += 1
 
