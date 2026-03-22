@@ -3,7 +3,7 @@ match_jobs.py — Score pending jobs against user's resume using Groq API (FREE)
 Generates a match score, 3-bullet summary, and a custom cover letter per job.
 
 Free API: console.groq.com — no credit card needed.
-Model: llama-3.3-70b-versatile (free tier: 6,000 tokens/min, 500,000 tokens/day)
+Model: llama-3.3-70b-versatile (free tier: 6,000 tokens/min, 500,000 tokens/day — best free quality)
 
 Usage:
     python tools/match_jobs.py
@@ -79,7 +79,7 @@ def score_job(client: Groq, resume: str, target_jd: str, job: dict) -> dict:
     )
 
     completion = client.chat.completions.create(
-        model="llama-3.1-8b-instant",
+        model="llama-3.3-70b-versatile",
         max_tokens=1200,
         messages=[
             {"role": "system", "content": SYSTEM_PROMPT},
