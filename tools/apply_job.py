@@ -19,10 +19,12 @@ import argparse
 import json
 import os
 import random
+import re
 import sys
 import time
 
 BASE_DIR = os.path.dirname(os.path.dirname(__file__))
+LINKEDIN_COOKIES_PATH = os.path.join(BASE_DIR, ".tmp", "linkedin_cookies.json")
 SCREENSHOTS_DIR = os.path.join(BASE_DIR, ".tmp", "screenshots")
 
 CAPTCHA_SIGNALS = [
@@ -89,7 +91,6 @@ def _load_resume_data() -> dict:
     with open(resume_path) as f:
         text = f.read()
     # Extract email
-    import re
     email_match = re.search(r"[\w.+-]+@[\w-]+\.[a-zA-Z]+", text)
     phone_match = re.search(r"(\+?[\d\s\-().]{10,})", text)
     linkedin_match = re.search(r"linkedin\.com/in/[\w-]+", text, re.IGNORECASE)
@@ -104,7 +105,198 @@ def _load_resume_data() -> dict:
     }
 
 
+def _is_linkedin_url(url: str) -> bool:
+    return "linkedin.com/jobs/view/" in url
+
+
+def apply_linkedin(url: str, cover_letter: str, resume_data: dict, headless: bool = True) -> dict:
+    """
+    Apply via LinkedIn Easy Apply modal.
+    Reuses the session cookies saved by search_jobs.py.
+    """
+    try:
+        from playwright.sync_api import sync_playwright
+        from playwright_stealth import stealth_sync
+    except ImportError as e:
+        return {"success": False, "method": "error", "message": f"Missing dependency: {e}"}
+
+    if not os.path.exists(LINKEDIN_COOKIES_PATH):
+        return {
+            "success": False, "method": "error",
+            "message": "LinkedIn session not found. Run search_jobs.py first to log in.",
+        }
+
+    os.makedirs(SCREENSHOTS_DIR, exist_ok=True)
+    job_id_match = re.search(r"/jobs/view/(\d+)", url)
+    job_id_str = job_id_match.group(1) if job_id_match else "unknown"
+
+    with sync_playwright() as p:
+        browser = p.chromium.launch(headless=headless)
+        context = browser.new_context(
+            user_agent=(
+                "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+                "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36"
+            ),
+            viewport={"width": 1280, "height": 800},
+        )
+        try:
+            with open(LINKEDIN_COOKIES_PATH) as f:
+                context.add_cookies(json.load(f))
+        except Exception as e:
+            browser.close()
+            return {"success": False, "method": "error", "message": f"Could not load LinkedIn cookies: {e}"}
+
+        page = context.new_page()
+        stealth_sync(page)
+
+        try:
+            page.goto(url, timeout=30000, wait_until="domcontentloaded")
+            _random_delay(2, 4)
+
+            if "login" in page.url or "authwall" in page.url:
+                browser.close()
+                return {
+                    "success": False, "method": "error",
+                    "message": "LinkedIn session expired. Run search_jobs.py again to refresh login.",
+                }
+
+            if _is_captcha_page(page):
+                browser.close()
+                return {"success": False, "method": "captcha_detected", "message": "CAPTCHA detected.", "url": url}
+
+            # Click Easy Apply button
+            easy_apply_btn = (
+                page.query_selector("button.jobs-apply-button") or
+                page.query_selector("button[aria-label*='Easy Apply']") or
+                page.query_selector("button:has-text('Easy Apply')")
+            )
+            if not easy_apply_btn or not easy_apply_btn.is_visible():
+                browser.close()
+                return {
+                    "success": False, "method": "no_easy_apply",
+                    "message": "No Easy Apply button found — job may require external application.",
+                    "url": url,
+                }
+
+            easy_apply_btn.click()
+            _random_delay(2, 3)
+
+            # Walk through modal steps (max 8 steps to handle multi-page forms)
+            for step in range(8):
+                # Fill phone if empty
+                phone_field = (
+                    page.query_selector("input[id*='phoneNumber']") or
+                    page.query_selector("input[name*='phone']") or
+                    page.query_selector("input[aria-label*='Phone' i]")
+                )
+                if phone_field and phone_field.is_visible():
+                    try:
+                        if not phone_field.input_value() and resume_data.get("phone"):
+                            phone_field.fill(resume_data["phone"])
+                            _random_delay(0.4, 0.8)
+                    except Exception:
+                        pass
+
+                # Fill cover letter textarea if present and empty
+                cl_field = (
+                    page.query_selector("textarea[id*='cover-letter']") or
+                    page.query_selector("textarea[name*='coverLetter']") or
+                    page.query_selector("textarea[aria-label*='cover letter' i]") or
+                    page.query_selector("textarea[aria-label*='Cover Letter' i]")
+                )
+                if cl_field and cl_field.is_visible() and cover_letter:
+                    try:
+                        if not cl_field.input_value():
+                            cl_field.fill(cover_letter[:2000])
+                            _random_delay(0.5, 1)
+                    except Exception:
+                        pass
+
+                # Auto-answer simple dropdowns (select first non-placeholder option)
+                for select_el in page.query_selector_all("select"):
+                    try:
+                        if not select_el.is_visible():
+                            continue
+                        opts = select_el.query_selector_all("option")
+                        if len(opts) > 1:
+                            val = opts[1].get_attribute("value")
+                            if val and not select_el.input_value():
+                                select_el.select_option(val)
+                    except Exception:
+                        pass
+
+                # Screenshot current step
+                page.screenshot(path=os.path.join(SCREENSHOTS_DIR, f"li_step{step}_{job_id_str}.png"))
+
+                # Submit
+                submit_btn = (
+                    page.query_selector("button[aria-label='Submit application']") or
+                    page.query_selector("button:has-text('Submit application')")
+                )
+                if submit_btn and submit_btn.is_visible():
+                    _random_delay(1, 2)
+                    submit_btn.click()
+                    _random_delay(2, 3)
+                    final_ss = os.path.join(SCREENSHOTS_DIR, f"li_submitted_{job_id_str}.png")
+                    page.screenshot(path=final_ss)
+                    browser.close()
+                    return {
+                        "success": True,
+                        "method": "linkedin_easy_apply",
+                        "message": "Applied via LinkedIn Easy Apply.",
+                        "screenshot": final_ss,
+                    }
+
+                # Review step
+                review_btn = (
+                    page.query_selector("button[aria-label='Review your application']") or
+                    page.query_selector("button:has-text('Review')")
+                )
+                if review_btn and review_btn.is_visible():
+                    review_btn.click()
+                    _random_delay(1, 2)
+                    continue
+
+                # Next step
+                next_btn = (
+                    page.query_selector("button[aria-label='Continue to next step']") or
+                    page.query_selector("button:has-text('Next')")
+                )
+                if next_btn and next_btn.is_visible():
+                    next_btn.click()
+                    _random_delay(1, 2)
+                    continue
+
+                # No navigation button found — stuck on a required field we can't fill
+                browser.close()
+                return {
+                    "success": False, "method": "modal_incomplete",
+                    "message": "Easy Apply modal has required fields that could not be auto-filled.",
+                    "url": url,
+                }
+
+            browser.close()
+            return {
+                "success": False, "method": "modal_incomplete",
+                "message": "Reached max steps in Easy Apply modal without submitting.",
+                "url": url,
+            }
+
+        except Exception as e:
+            try:
+                browser.close()
+            except Exception:
+                pass
+            return {"success": False, "method": "error", "message": str(e)}
+
+
 def apply(url: str, cover_letter: str, headless: bool = True) -> dict:
+    resume_data = _load_resume_data()
+
+    # Route LinkedIn jobs to the Easy Apply handler
+    if _is_linkedin_url(url):
+        return apply_linkedin(url, cover_letter, resume_data, headless)
+
     try:
         from playwright.sync_api import sync_playwright
         from playwright_stealth import stealth_sync
@@ -113,7 +305,6 @@ def apply(url: str, cover_letter: str, headless: bool = True) -> dict:
                 "message": f"Missing dependency: {e}. Run: pip install playwright playwright-stealth && playwright install chromium"}
 
     os.makedirs(SCREENSHOTS_DIR, exist_ok=True)
-    resume_data = _load_resume_data()
 
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=headless)

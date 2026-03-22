@@ -1,16 +1,17 @@
 """
-search_jobs.py — Fetch remote jobs from RemoteOK and We Work Remotely.
-Saves new jobs to SQLite. Skips duplicates and blacklisted entries.
+search_jobs.py — Fetch remote jobs from LinkedIn (Easy Apply) and We Work Remotely.
+Saves new jobs to SQLite. Skips duplicates, blacklisted entries, and internships.
 
 Usage:
-    python tools/search_jobs.py --query "python developer"
-    python tools/search_jobs.py --query "data engineer" --query "backend developer"
+    python tools/search_jobs.py --query "AI engineer"
+    python tools/search_jobs.py --query "ML engineer" --query "LLM engineer"
 """
 
 import argparse
 import hashlib
 import json
 import os
+import random
 import re
 import sys
 import time
@@ -67,7 +68,186 @@ def _parse_salary(text: str) -> str:
 
 
 # --------------------------------------------------------------------------- #
-# RemoteOK
+# LinkedIn Easy Apply
+# --------------------------------------------------------------------------- #
+
+BASE_DIR = os.path.dirname(os.path.dirname(__file__))
+LINKEDIN_COOKIES_PATH = os.path.join(BASE_DIR, ".tmp", "linkedin_cookies.json")
+
+
+def _linkedin_login(page, email: str, password: str) -> bool:
+    """Log in to LinkedIn. Returns True on success."""
+    page.goto("https://www.linkedin.com/login", timeout=30000, wait_until="domcontentloaded")
+    time.sleep(random.uniform(1.5, 3))
+    try:
+        page.fill("#username", email)
+        time.sleep(random.uniform(0.4, 0.9))
+        page.fill("#password", password)
+        time.sleep(random.uniform(0.4, 0.9))
+        page.click('button[type="submit"]')
+        time.sleep(random.uniform(3, 5))
+    except Exception as e:
+        print(f"[search] LinkedIn login interaction error: {e}")
+        return False
+    url = page.url
+    return "feed" in url or "mynetwork" in url or ("/jobs" in url and "login" not in url)
+
+
+def _save_linkedin_cookies(context):
+    os.makedirs(os.path.dirname(LINKEDIN_COOKIES_PATH), exist_ok=True)
+    with open(LINKEDIN_COOKIES_PATH, "w") as f:
+        json.dump(context.cookies(), f)
+
+
+def _load_linkedin_cookies(context) -> bool:
+    if not os.path.exists(LINKEDIN_COOKIES_PATH):
+        return False
+    try:
+        with open(LINKEDIN_COOKIES_PATH) as f:
+            context.add_cookies(json.load(f))
+        return True
+    except Exception:
+        return False
+
+
+def fetch_linkedin(queries: list, cfg: dict) -> list:
+    """
+    Scrape LinkedIn Jobs with Easy Apply + Remote filters using Playwright.
+    Job type filter excludes Internships (f_JT=F,C,P,T — no I).
+    Requires LINKEDIN_EMAIL and LINKEDIN_PASSWORD in .env
+    """
+    try:
+        from playwright.sync_api import sync_playwright
+        from playwright_stealth import stealth_sync
+    except ImportError:
+        print("[search] LinkedIn: playwright not installed — skipping")
+        return []
+
+    from dotenv import load_dotenv
+    load_dotenv(os.path.join(BASE_DIR, ".env"))
+    email = os.getenv("LINKEDIN_EMAIL", "")
+    password = os.getenv("LINKEDIN_PASSWORD", "")
+    if not email or not password:
+        print("[search] LinkedIn: LINKEDIN_EMAIL/LINKEDIN_PASSWORD not set in .env — skipping")
+        return []
+
+    print("[search] Fetching LinkedIn Jobs (Easy Apply, Remote, no internships)...")
+    results = []
+    seen_ids = set()
+
+    with sync_playwright() as p:
+        browser = p.chromium.launch(headless=True)
+        context = browser.new_context(
+            user_agent=(
+                "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+                "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36"
+            ),
+            viewport={"width": 1280, "height": 800},
+        )
+        page = context.new_page()
+        stealth_sync(page)
+
+        # Try saved session first
+        logged_in = False
+        if _load_linkedin_cookies(context):
+            page.goto("https://www.linkedin.com/jobs/", timeout=30000, wait_until="domcontentloaded")
+            time.sleep(2)
+            logged_in = "login" not in page.url and "authwall" not in page.url
+
+        if not logged_in:
+            logged_in = _linkedin_login(page, email, password)
+            if logged_in:
+                _save_linkedin_cookies(context)
+            else:
+                print("[search] LinkedIn: Login failed — check LINKEDIN_EMAIL/LINKEDIN_PASSWORD in .env")
+                browser.close()
+                return []
+
+        for query in queries[:5]:  # Cap at 5 queries to avoid triggering bot detection
+            encoded = query.replace(" ", "%20")
+            # f_AL=true  → Easy Apply only
+            # f_WT=2     → Remote
+            # f_JT=F,C,P,T → Full-time/Contract/Part-time/Temporary (excludes Internship=I)
+            search_url = (
+                f"https://www.linkedin.com/jobs/search/"
+                f"?keywords={encoded}&f_AL=true&f_WT=2&f_JT=F%2CC%2CP%2CT&start=0"
+            )
+            try:
+                page.goto(search_url, timeout=30000, wait_until="domcontentloaded")
+                time.sleep(random.uniform(2.5, 4))
+
+                # Scroll to trigger lazy loading
+                for _ in range(2):
+                    page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
+                    time.sleep(1.5)
+
+                job_items = page.query_selector_all("li.jobs-search-results__list-item")
+                if not job_items:
+                    job_items = page.query_selector_all(".job-card-container")
+
+                for card in job_items[:20]:
+                    try:
+                        title_el = (
+                            card.query_selector("a.job-card-list__title") or
+                            card.query_selector(".job-card-list__title") or
+                            card.query_selector("strong")
+                        )
+                        company_el = (
+                            card.query_selector(".job-card-container__primary-description") or
+                            card.query_selector(".artdeco-entity-lockup__subtitle span")
+                        )
+                        link_el = card.query_selector("a[href*='/jobs/view/']")
+
+                        if not title_el or not link_el:
+                            continue
+
+                        title = title_el.inner_text().strip()
+                        company = company_el.inner_text().strip() if company_el else ""
+                        href = link_el.get_attribute("href") or ""
+
+                        id_match = re.search(r"/jobs/view/(\d+)", href)
+                        if not id_match:
+                            continue
+                        linkedin_id = id_match.group(1)
+                        if linkedin_id in seen_ids:
+                            continue
+                        seen_ids.add(linkedin_id)
+
+                        job_url = f"https://www.linkedin.com/jobs/view/{linkedin_id}/"
+
+                        if not title:
+                            continue
+                        if _is_blacklisted(title, company, cfg):
+                            continue
+
+                        results.append({
+                            "id": _make_id(job_url),
+                            "title": title,
+                            "company": company,
+                            "url": job_url,
+                            "domain": "",
+                            "description": "",
+                            "tags": query,
+                            "salary": "",
+                            "source": "linkedin",
+                        })
+                    except Exception:
+                        continue
+
+                time.sleep(random.uniform(2, 4))
+
+            except Exception as e:
+                print(f"[search] LinkedIn error for '{query}': {e}")
+                continue
+
+        browser.close()
+
+    print(f"[search] LinkedIn: {len(results)} Easy Apply jobs found")
+    return results
+
+
+# --------------------------------------------------------------------------- #
+# RemoteOK  (kept for reference — not called by default)
 # --------------------------------------------------------------------------- #
 
 def fetch_remoteok(queries: list, cfg: dict) -> list:
@@ -213,7 +393,7 @@ def main():
     init_db()
 
     all_jobs = []
-    all_jobs.extend(fetch_remoteok(queries, cfg))
+    all_jobs.extend(fetch_linkedin(queries, cfg))
     all_jobs.extend(fetch_weworkremotely(queries, cfg))
 
     # Apply max_jobs_per_run limit to *newly saved* jobs, not total fetched.
