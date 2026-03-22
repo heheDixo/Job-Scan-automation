@@ -75,7 +75,7 @@ def score_job(client: Groq, resume: str, target_jd: str, job: dict) -> dict:
         target_jd=target_jd,
         title=job["title"],
         company=job["company"],
-        description=job.get("description", "No description available.")[:3000],
+        description=job.get("description", "No description available.")[:1500],
     )
 
     completion = client.chat.completions.create(
@@ -157,6 +157,11 @@ def main():
     matched = 0
     rejected = 0
 
+    # Groq free tier: ~6,000 tokens/min for llama-3.3-70b-versatile.
+    # Each request uses ~800-1000 tokens → safe rate is ~1 request per 12s.
+    # Proactive sleep avoids hitting the limit and waiting minutes to recover.
+    REQUEST_INTERVAL = 13  # seconds between requests
+
     for i, job in enumerate(pending_jobs, 1):
         print(f"[match] [{i}/{len(pending_jobs)}] {job['title']} @ {job['company']}...", end=" ")
 
@@ -164,18 +169,23 @@ def main():
             result = score_job(client, resume, target_jd, job)
         except json.JSONDecodeError as e:
             print(f"JSON parse error: {e} — skipping")
+            time.sleep(REQUEST_INTERVAL)
             continue
         except Exception as e:
             err = str(e)
             if "rate_limit" in err.lower():
-                # Parse actual wait time from error: "Please try again in Xm Ys"
-                wait_seconds = 65  # default
+                if "tokens per day" in err.lower():
+                    print(f"\n[match] Daily token limit exhausted — stopping. Quota resets tomorrow.")
+                    break
+                # Parse actual wait time but cap at 90s — longer waits mean
+                # the quota won't recover in a reasonable time; stop and resume next run
                 import re as _re
+                wait_seconds = 65  # default
                 m = _re.search(r'try again in (\d+)m([\d.]+)s', err)
                 if m:
                     wait_seconds = int(m.group(1)) * 60 + float(m.group(2)) + 5
-                elif "tokens per day" in err.lower():
-                    print(f"\n[match] Daily token limit exhausted — stopping. Run again tomorrow or tomorrow the quota resets.")
+                if wait_seconds > 90:
+                    print(f"\n[match] Rate limit requires {int(wait_seconds)}s wait — stopping to avoid long block. Remaining jobs will be scored next run.")
                     break
                 print(f"Rate limit hit — waiting {int(wait_seconds)}s...")
                 time.sleep(wait_seconds)
@@ -183,9 +193,11 @@ def main():
                     result = score_job(client, resume, target_jd, job)
                 except Exception as e2:
                     print(f"API error after retry: {e2} — skipping")
+                    time.sleep(REQUEST_INTERVAL)
                     continue
             else:
                 print(f"API error: {e} — skipping")
+                time.sleep(REQUEST_INTERVAL)
                 continue
 
         score = result.get("score", 0)
@@ -210,6 +222,10 @@ def main():
         else:
             rejected += 1
             print(f"❌ Score: {score} → rejected")
+
+        # Proactive rate-limit pacing — stay under 6k tokens/min free tier
+        if i < len(pending_jobs):
+            time.sleep(REQUEST_INTERVAL)
 
     print(f"\n[match] Done. {matched} matched, {rejected} rejected.")
     if matched > 0:
