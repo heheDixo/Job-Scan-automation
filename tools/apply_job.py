@@ -5,10 +5,11 @@ Features:
 - playwright-stealth to avoid bot fingerprinting
 - Randomized human-like delays (1-4s between actions)
 - CAPTCHA detection → falls back gracefully (caller handles fallback)
-- Takes success screenshot
+- Takes pre-fill and post-submit screenshots
 
 Usage:
-    python tools/apply_job.py --url "https://..." --cover-letter "..." [--headless]
+    python tools/apply_job.py --url "https://..." --cover-letter-file /tmp/cl.txt [--headless]
+    python tools/apply_job.py --url "https://..." --cover-letter "text..." [--headless]
 
 Returns JSON to stdout:
     {"success": true/false, "method": "auto"/"captcha_detected"/"error", "message": "..."}
@@ -38,6 +39,17 @@ COMMON_FORM_FIELDS = {
     "cover_letter": ["cover_letter", "coverletter", "message", "cover letter"],
     "resume_text":  ["resume", "cv", "resume_text", "experience"],
 }
+
+SUBMIT_SELECTORS = [
+    'button[type="submit"]',
+    'input[type="submit"]',
+    'button:has-text("Apply")',
+    'button:has-text("Submit")',
+    'button:has-text("Send Application")',
+    'button:has-text("Submit Application")',
+    'a:has-text("Apply Now")',
+    'button:has-text("Apply Now")',
+]
 
 
 def _random_delay(min_s: float = 1.0, max_s: float = 3.5):
@@ -192,12 +204,51 @@ def apply(url: str, cover_letter: str, headless: bool = True) -> dict:
             screenshot_path = os.path.join(SCREENSHOTS_DIR, f"filled_{job_id}.png")
             page.screenshot(path=screenshot_path)
 
+            # Find and click submit button
+            submit_el = None
+            for selector in SUBMIT_SELECTORS:
+                try:
+                    el = page.query_selector(selector)
+                    if el and el.is_visible():
+                        submit_el = el
+                        break
+                except Exception:
+                    continue
+
+            if not submit_el:
+                browser.close()
+                return {
+                    "success": False,
+                    "method": "no_submit_button",
+                    "message": "Form filled but could not find a submit button. Please apply manually.",
+                    "url": url,
+                    "screenshot": screenshot_path,
+                }
+
+            _random_delay(1, 2)
+            submit_el.click()
+            _random_delay(2, 4)
+
+            # Check for CAPTCHA post-submit
+            if _is_captcha_page(page):
+                browser.close()
+                return {
+                    "success": False,
+                    "method": "captcha_detected",
+                    "message": "CAPTCHA appeared after submit. Please apply manually.",
+                    "url": url,
+                }
+
+            # Take post-submit screenshot as confirmation
+            confirm_screenshot = os.path.join(SCREENSHOTS_DIR, f"submitted_{job_id}.png")
+            page.screenshot(path=confirm_screenshot)
+
             browser.close()
             return {
                 "success": True,
                 "method": "auto",
-                "message": "Form filled successfully. Screenshot saved.",
-                "screenshot": screenshot_path,
+                "message": "Form filled and submitted. Screenshot saved.",
+                "screenshot": confirm_screenshot,
             }
 
         except Exception as e:
@@ -215,14 +266,20 @@ def apply(url: str, cover_letter: str, headless: bool = True) -> dict:
 def main():
     parser = argparse.ArgumentParser(description="Auto-apply to a job posting")
     parser.add_argument("--url", required=True, help="Job application URL")
-    parser.add_argument("--cover-letter", default="", help="Cover letter text")
+    parser.add_argument("--cover-letter", default="", help="Cover letter text (inline)")
+    parser.add_argument("--cover-letter-file", default="", help="Path to file containing cover letter text")
     parser.add_argument("--headless", action="store_true", default=True,
                         help="Run browser in headless mode (default: True)")
     parser.add_argument("--no-headless", dest="headless", action="store_false",
                         help="Show browser window (useful for debugging)")
     args = parser.parse_args()
 
-    result = apply(args.url, args.cover_letter, args.headless)
+    cover_letter = args.cover_letter
+    if args.cover_letter_file and os.path.exists(args.cover_letter_file):
+        with open(args.cover_letter_file) as f:
+            cover_letter = f.read()
+
+    result = apply(args.url, cover_letter, args.headless)
     print(json.dumps(result, indent=2))
     sys.exit(0 if result["success"] else 1)
 
