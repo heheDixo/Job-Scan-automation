@@ -23,6 +23,7 @@ import json
 import os
 import subprocess
 import sys
+import threading
 
 import requests
 from dotenv import load_dotenv
@@ -155,18 +156,21 @@ def handle_confirm_submit(job_id: str):
             f"✅ <b>Applied!</b>\n{job['title']} @ {job['company']}\n"
             f"Method: {result.get('method', 'auto')}"
         )
+        _run_sync_sheets(job_id)
     elif result.get("method") == "captcha_detected":
         send_message(
             f"🔒 <b>CAPTCHA detected</b> — please apply manually:\n"
             f"🔗 <a href=\"{job['url']}\">Apply here</a>"
         )
         mark_manual(job_id)
+        _run_sync_sheets(job_id)
     else:
         send_message(
             f"⚠️ Auto-apply failed: {result.get('message', 'Unknown error')}\n"
             f"Please apply manually: <a href=\"{job['url']}\">{job['url']}</a>"
         )
         mark_manual(job_id)
+        _run_sync_sheets(job_id)
 
     # Extract contacts regardless of apply result
     if job.get("domain"):
@@ -184,6 +188,7 @@ def handle_manual(job_id: str):
         f"✏️ <b>Apply yourself:</b>\n"
         f"<a href=\"{job['url']}\">{job['title']} @ {job['company']}</a>"
     )
+    _run_sync_sheets(job_id)
     if job.get("domain"):
         _run_contacts(job)
 
@@ -200,19 +205,47 @@ def handle_skip(job_id: str):
 # --------------------------------------------------------------------------- #
 
 def _run_apply(job: dict) -> dict:
+    import tempfile
     tools_dir = os.path.dirname(__file__)
-    cmd = [
-        sys.executable,
-        os.path.join(tools_dir, "apply_job.py"),
-        "--url", job["url"],
-        "--cover-letter", job.get("cover_letter", ""),
-        "--headless",
-    ]
+
+    # Write cover letter to a temp file to avoid shell arg length limits
+    cover_letter = job.get("cover_letter", "")
+    tmp = None
     try:
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".txt", delete=False) as f:
+            f.write(cover_letter)
+            tmp = f.name
+
+        cmd = [
+            sys.executable,
+            os.path.join(tools_dir, "apply_job.py"),
+            "--url", job["url"],
+            "--cover-letter-file", tmp,
+            "--headless",
+        ]
         result = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
         return json.loads(result.stdout)
     except (subprocess.TimeoutExpired, json.JSONDecodeError, Exception) as e:
         return {"success": False, "method": "error", "message": str(e)}
+    finally:
+        if tmp and os.path.exists(tmp):
+            os.unlink(tmp)
+
+
+def _run_sync_sheets(job_id: str):
+    """Sync a single job to Google Sheets (best effort, non-blocking)."""
+    sheet_id = os.getenv("GOOGLE_SHEET_ID", "")
+    if not sheet_id:
+        return  # Google Sheets not configured — skip silently
+    tools_dir = os.path.dirname(__file__)
+    try:
+        subprocess.run(
+            [sys.executable, os.path.join(tools_dir, "sync_sheets.py"),
+             "--job-id", job_id],
+            capture_output=True, timeout=30
+        )
+    except Exception:
+        pass  # Sheets sync is best-effort; don't break the main flow
 
 
 def _run_contacts(job: dict):
@@ -226,7 +259,13 @@ def _run_contacts(job: dict):
     ]
     try:
         result = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
-        contacts = json.loads(result.stdout.strip().split("\n")[-1])  # Last line is JSON
+        # Extract the JSON array from stdout — search for the last [...] block
+        # so that any preceding log lines or legal disclaimers don't break parsing
+        import re as _re
+        json_match = _re.search(r'(\[.*\])', result.stdout, _re.DOTALL)
+        if not json_match:
+            return
+        contacts = json.loads(json_match.group(1))
         if contacts:
             lines = []
             for c in contacts:
@@ -267,14 +306,14 @@ def webhook():
 
         if action == "apply":
             edit_message_text(chat_id, msg_id, f"⏳ Loading preview for job {job_id}...")
-            handle_apply_approved(job_id)
+            threading.Thread(target=handle_apply_approved, args=(job_id,), daemon=True).start()
         elif action == "confirm":
-            edit_message_text(chat_id, msg_id, f"⏳ Submitting application...")
-            handle_confirm_submit(job_id)
+            edit_message_text(chat_id, msg_id, "⏳ Submitting application...")
+            threading.Thread(target=handle_confirm_submit, args=(job_id,), daemon=True).start()
         elif action == "manual":
-            handle_manual(job_id)
+            threading.Thread(target=handle_manual, args=(job_id,), daemon=True).start()
         elif action == "skip":
-            handle_skip(job_id)
+            handle_skip(job_id)  # Fast DB write — no need to background
 
     return jsonify(ok=True)
 
