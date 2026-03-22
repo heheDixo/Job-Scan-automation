@@ -39,7 +39,13 @@ ngrok http 8443
 # Set TELEGRAM_WEBHOOK_URL to your server's public HTTPS URL
 ```
 
-### 4. Initialize the database
+### 4. Install Playwright browser
+```bash
+playwright install chromium
+```
+> Required once after `pip install`. Without this step, `apply_job.py` will fail with a browser launch error.
+
+### 5. Initialize the database
 ```bash
 python tools/db.py
 ```
